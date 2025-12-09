@@ -1,4 +1,4 @@
-# AI Agent Framework - Product Requirements Document
+# AI Agent Framework - Core Requirements Document
 
 ## 1. Overview
 
@@ -22,6 +22,20 @@ The framework provides:
 - ML Engineers building custom agent applications
 - Developers integrating agentic capabilities into existing systems
 - Researchers experimenting with agent architectures and patterns
+
+### 1.4 Related Documents
+
+Agent pattern requirements are defined in separate documents:
+
+| Pattern | Document |
+|---------|----------|
+| ReAct (Reasoning and Acting) | [pattern-react.md](./patterns/pattern-react.md) |
+| Planning | [pattern-planning.md](./patterns/pattern-planning.md) |
+| Reflection | [pattern-reflection.md](./patterns/pattern-reflection.md) |
+| Human-in-the-Loop | [pattern-human-in-the-loop.md](./patterns/pattern-human-in-the-loop.md) |
+| Multi-Agent Systems | [pattern-multi-agent.md](./patterns/pattern-multi-agent.md) |
+| Meta-Controller (Router/Orchestrator) | [pattern-meta-controller.md](./patterns/pattern-meta-controller.md) |
+| Blackboard System (Shared Workspace) | [pattern-blackboard.md](./patterns/pattern-blackboard.md) |
 
 ---
 
@@ -48,52 +62,21 @@ The framework provides:
 
 ### 3.1 Agent Pattern Support
 
-The framework must support the following agent patterns through composable primitives:
+The framework must provide a pattern-agnostic base agent class that can be extended to support various agent patterns. Pattern implementations are defined in separate requirement documents (see Section 1.4).
 
-#### 3.1.1 ReAct (Reasoning and Acting)
+#### 3.1.1 Pattern Interface Requirements
 
-- **Description**: Interleaved reasoning traces and action execution
-- **Requirements**:
-  - Support for thought/action/observation loops
-  - Configurable maximum iterations
-  - Early termination conditions (success criteria, failure detection)
-  - Trace logging for each reasoning step
+- Base `AgentPattern` abstract class that all patterns must implement
+- Standard lifecycle hooks: `on_start`, `on_step`, `on_complete`, `on_error`
+- Pattern-specific configuration via Pydantic models
+- Composable patterns (ability to combine multiple patterns)
+- Runtime pattern switching (optional, for advanced use cases)
 
-#### 3.1.2 Planning
+#### 3.1.2 Pattern Registration
 
-- **Description**: Upfront plan generation followed by execution
-- **Requirements**:
-  - Plan generation phase with structured output (list of steps)
-  - Plan validation hooks (optional user or programmatic approval)
-  - Step-by-step execution with plan revision capabilities
-  - Support for hierarchical task decomposition
-
-#### 3.1.3 Reflection
-
-- **Description**: Self-evaluation and iterative improvement
-- **Requirements**:
-  - Configurable reflection triggers (after N steps, on error, on completion)
-  - Reflection prompt customization
-  - Action revision based on reflection output
-  - Reflection history tracking
-
-#### 3.1.4 Human-in-the-Loop
-
-- **Description**: Human intervention points during agent execution
-- **Requirements**:
-  - Configurable approval gates (before tool execution, before final response, on specific tools)
-  - Timeout handling for human responses
-  - Rejection handling with feedback incorporation
-  - Async-compatible interface for integration with various UI/notification systems
-
-#### 3.1.5 Multi-Agent Systems
-
-- **Description**: Coordination between multiple specialized agents
-- **Requirements**:
-  - Agent-to-agent communication primitives
-  - Orchestration patterns: sequential handoff, parallel execution, hierarchical delegation
-  - Shared context mechanisms (blackboard pattern support)
-  - Agent role and capability declarations
+- Patterns registered via decorator or explicit registration
+- Pattern discovery for available patterns
+- Pattern validation on agent instantiation
 
 ### 3.2 Project and Dependency Management
 
@@ -101,7 +84,7 @@ The framework must support the following agent patterns through composable primi
 |-------------|---------------|
 | Package Manager | UV (astral-sh/uv) |
 | Project Structure | UV workspace support for monorepo compatibility |
-| Python Version | 3.11+ |
+| Python Version | 3.12+ |
 | Lock File | `uv.lock` for reproducible builds |
 | Dependency Groups | Separate groups for core, dev, and optional integrations |
 
@@ -112,6 +95,7 @@ The framework must support the following agent patterns through composable primi
 | Pydantic AI | Agent orchestration, tool definitions, structured outputs |
 | Pydantic | Data validation, settings management, schema definitions |
 | httpx | HTTP client for API calls and MCP communication |
+| tiktoken | Token counting and context window management |
 
 ### 3.4 Model Backend Compatibility
 
@@ -124,7 +108,26 @@ The framework must work with any model backend exposing an OpenAI-compatible API
   - Model identifier
   - Default generation parameters (temperature, max_tokens, top_p, etc.)
 - **Tested Backends**: Ollama, vLLM, llama.cpp server, LM Studio, LocalAI
-- **Streaming Support**: Must support both streaming and non-streaming responses
+- **Streaming Support**: Must support both streaming and non-streaming responses for model outputs and tool results
+
+#### 3.4.1 Streaming Configuration
+
+| Component | Streamable | Description |
+|-----------|------------|-------------|
+| Model responses | Yes | Token-by-token streaming of LLM output |
+| Tool results | Yes | Streaming output from long-running tools (e.g., bash commands, file reads) |
+| Subagent output | Yes | Stream subagent responses back to parent |
+| Final response | Yes | Complete agent response stream |
+
+**Streaming Configuration**:
+```python
+StreamingConfig(
+    stream_model_responses=True,    # Stream LLM token output
+    stream_tool_results=True,       # Stream tool execution output
+    stream_subagent_output=False,   # Buffer subagent output (default)
+    chunk_size=1024,                # Bytes per chunk for tool streaming
+)
+```
 
 ### 3.5 Built-in Tools
 
@@ -224,6 +227,7 @@ All built-in tools must follow Pydantic AI's tool definition patterns and includ
 | Lifecycle | Managed server lifecycle (start, health check, shutdown) |
 | Configuration | YAML or JSON configuration for server definitions |
 | Multiple Servers | Support for connecting to multiple MCP servers simultaneously |
+| Authentication | API key authentication for secured MCP servers |
 
 **MCP Configuration Example**:
 ```yaml
@@ -235,7 +239,26 @@ mcp_servers:
   - name: custom-api
     url: http://localhost:8080/mcp
     transport: sse
+    auth:
+      type: api_key
+      key_env: MCP_CUSTOM_API_KEY  # Environment variable containing the API key
+      header: X-API-Key            # Header name for the API key (default: Authorization)
+  - name: secured-service
+    url: https://api.example.com/mcp
+    transport: sse
+    auth:
+      type: api_key
+      key: ${SECURED_SERVICE_KEY}  # Direct reference to environment variable
 ```
+
+**Authentication Configuration**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `type` | `str` | Authentication type (`api_key`) |
+| `key_env` | `str` | Environment variable name containing the API key |
+| `key` | `str` | Direct key value or environment variable reference (`${VAR_NAME}`) |
+| `header` | `str` | HTTP header name for the key (default: `Authorization` with `Bearer` prefix) |
 
 ### 3.7 Subagent System
 
@@ -266,9 +289,55 @@ mcp_servers:
 - Summary token budget configuration
 - Summary inclusion in parent context
 
+#### 3.7.4 Subagent Limits
+
+Configurable limits to prevent runaway subagent spawning and excessive resource consumption.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_subagents` | `int` | `5` | Maximum number of concurrent subagents per parent agent |
+| `max_depth` | `int` | `3` | Maximum nesting depth (subagents spawning subagents) |
+| `max_total_subagents` | `int` | `20` | Maximum total subagents across entire agent tree |
+| `subagent_timeout` | `float` | `300.0` | Default timeout in seconds for subagent execution |
+
+**Subagent Limits Configuration**:
+```python
+SubagentLimitsConfig(
+    max_subagents=5,           # Max concurrent subagents per parent
+    max_depth=3,               # Max nesting depth
+    max_total_subagents=20,    # Max across entire hierarchy
+    subagent_timeout=300.0,    # 5 minute default timeout
+    on_limit_exceeded="error", # "error", "queue", or "reject_oldest"
+)
+```
+
 ### 3.8 Token Usage Tracking
 
-#### 3.8.1 Metrics Captured
+#### 3.8.1 Token Counting Implementation
+
+Token counting uses **tiktoken** for approximate token estimation. This provides fast, local token counting without requiring model backend calls.
+
+| Configuration | Description |
+|---------------|-------------|
+| `tokenizer` | Tiktoken encoding to use (default: `cl100k_base` for GPT-4 compatibility) |
+| `fallback_encoding` | Fallback if model-specific encoding unavailable |
+| `count_special_tokens` | Include special tokens in count (default: `True`) |
+
+**Tokenizer Configuration**:
+```python
+TokenizerConfig(
+    encoding="cl100k_base",      # Default tiktoken encoding
+    model_mapping={              # Optional model-specific encodings
+        "llama": "cl100k_base",
+        "mistral": "cl100k_base",
+    },
+    cache_tokenizer=True,        # Cache tokenizer instance for performance
+)
+```
+
+**Note**: Token counts are approximate and may vary slightly from actual model tokenization. For context window management, counts include a configurable safety margin (default: 5%) to prevent overflow.
+
+#### 3.8.2 Metrics Captured
 
 | Metric | Description |
 |--------|-------------|
@@ -277,7 +346,7 @@ mcp_servers:
 | `total_tokens` | Sum of prompt and completion tokens |
 | `cached_tokens` | Tokens served from cache (if applicable) |
 
-#### 3.8.2 Tracking Granularity
+#### 3.8.3 Tracking Granularity
 
 - Per-request token counts
 - Per-agent cumulative totals
@@ -376,6 +445,47 @@ CompactionConfig(
 - Tool execution timeout enforcement
 - State recovery after unexpected termination (checkpoint support)
 
+#### 4.2.1 Error Recovery Configuration
+
+Error recovery aggressiveness is configurable on a scale of 1-3, with different retry behaviors for tool failures vs. model failures.
+
+| Level | Description | Tool Retries | Model Retries | Backoff |
+|-------|-------------|--------------|---------------|---------|
+| `1` (Conservative) | Minimal retries, fail fast | 1 | 2 | Aggressive (2x multiplier) |
+| `2` (Balanced) | Default behavior | 2 | 3 | Standard (1.5x multiplier) |
+| `3` (Aggressive) | Maximum retry attempts | 3 | 5 | Gentle (1.2x multiplier) |
+
+**Error Recovery Configuration**:
+```python
+ErrorRecoveryConfig(
+    retry_level=2,                    # 1=conservative, 2=balanced (default), 3=aggressive
+
+    # Fine-grained overrides (optional)
+    tool_max_retries=None,            # Override tool retry count
+    model_max_retries=None,           # Override model retry count
+
+    # Backoff configuration
+    initial_backoff_seconds=1.0,      # Initial wait before retry
+    max_backoff_seconds=60.0,         # Maximum wait between retries
+
+    # Error classification
+    retryable_tool_errors=[           # Tool errors that trigger retry
+        "TimeoutError",
+        "ConnectionError",
+        "TemporaryFailure",
+    ],
+    retryable_model_errors=[          # Model errors that trigger retry
+        "RateLimitError",
+        "ServiceUnavailable",
+        "Timeout",
+    ],
+
+    # Circuit breaker
+    circuit_breaker_threshold=5,      # Failures before circuit opens
+    circuit_breaker_timeout=30.0,     # Seconds before retry after circuit opens
+)
+```
+
 ### 4.3 Security
 
 - No execution of untrusted code without explicit sandbox configuration
@@ -421,18 +531,20 @@ CompactionConfig(
 │  │  • Reflection   │  │  • MCP Bridge   │  │ • Token Count   │  │
 │  │  • HITL         │  │                 │  │                 │  │
 │  │  • Multi-Agent  │  │                 │  │                 │  │
+│  │  • Meta-Control │  │                 │  │                 │  │
+│  │  • Blackboard   │  │                 │  │                 │  │
 │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘  │
 │           │                    │                    │           │
 │           └────────────────────┼────────────────────┘           │
 │                                │                                │
 │  ┌─────────────────────────────┴─────────────────────────────┐  │
-│  │                      Core Agent Engine                     │  │
+│  │                      Core Agent Engine                    │  │
 │  │  (Pydantic AI integration, execution loop, state mgmt)    │  │
 │  └─────────────────────────────┬─────────────────────────────┘  │
 │                                │                                │
 │  ┌─────────────────────────────┴─────────────────────────────┐  │
-│  │                     Model Backend Layer                    │  │
-│  │              (OpenAI-compatible API adapter)               │  │
+│  │                     Model Backend Layer                   │  │
+│  │              (OpenAI-compatible API adapter)              │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                                  │
@@ -468,10 +580,11 @@ CompactionConfig(
 
 ## 7. Example Usage
 
-### 7.1 Basic ReAct Agent
+### 7.1 Basic Agent with Tools
 
 ```python
-from agent_framework import Agent, ReActPattern
+from agent_framework import Agent
+from agent_framework.patterns import ReActPattern
 from agent_framework.tools import read_file, write_file, run_bash
 from agent_framework.backends import LocalModelBackend
 
@@ -490,10 +603,11 @@ agent = Agent(
 result = await agent.run("Create a Python script that lists all .py files in the current directory")
 ```
 
-### 7.2 Multi-Agent with Subagents
+### 7.2 Agent with Subagents
 
 ```python
-from agent_framework import Agent, PlanningPattern
+from agent_framework import Agent
+from agent_framework.patterns import PlanningPattern
 from agent_framework.subagents import SubagentConfig
 
 research_config = SubagentConfig(
@@ -523,7 +637,7 @@ orchestrator = Agent(
 
 | Criterion | Measurement |
 |-----------|-------------|
-| Pattern Coverage | All 5 patterns implemented with documentation |
+| Pattern Coverage | All 7 patterns implemented with documentation |
 | Tool Reliability | Built-in tools pass 100% of integration tests |
 | Token Accuracy | Token counts within 5% of actual model tokenization |
 | Local Model Compat | Verified working with Ollama, vLLM, llama.cpp |
@@ -545,13 +659,15 @@ These items are explicitly out of scope for initial release but should inform ar
 
 ---
 
-## 10. Open Questions
+## Appendix A: Glossary
 
-1. **Streaming Granularity**: Should tool results be streamable, or only final agent responses?
-2. **Error Recovery**: How aggressive should automatic retry be for tool failures vs. model failures?
-3. **Subagent Limits**: Should there be a maximum subagent depth or count by default?
-4. **Token Counting**: Use tiktoken (approximate) or defer to model backend for exact counts?
-5. **MCP Authentication**: How to handle authenticated MCP servers (OAuth, API keys)?
+| Term | Definition |
+|------|------------|
+| Agent Pattern | A structured approach to agent behavior (e.g., ReAct, Planning) |
+| Compaction | The process of reducing context size while preserving relevant information |
+| HITL | Human-in-the-Loop, requiring human approval at decision points |
+| MCP | Model Context Protocol, a standard for tool/resource integration |
+| Subagent | A child agent spawned by a parent agent for delegated tasks |
 
 ---
 
@@ -560,4 +676,3 @@ These items are explicitly out of scope for initial release but should inform ar
 - [Pydantic AI Documentation](https://ai.pydantic.dev/)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
 - [UV Package Manager](https://github.com/astral-sh/uv)
-- [ReAct Paper](https://arxiv.org/abs/2210.03629)
